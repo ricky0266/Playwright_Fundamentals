@@ -127,6 +127,12 @@ tta-report/report_<timestamp>.html
 - ✅ Web tables automation
 - ✅ Video recording & screenshots on all tests
 - 🔄 Daily practice projects
+  - **Task 21 April 2026:** Multiple Contexts, Single Context with Multiple Pages, Incognito sessions.
+  - **Task 23 April 2026:** Automating Make Appointments flow on Katalon Demo Cura.
+  - **Task 25 April 2026:** App VWO invalid login automation using `getByRole`.
+  - **Task 28 April 2026:** Advanced locating strategies.
+  - **Task 02 May 2026:** Automating TTA Bank Digital app (Create account, transfer funds & logging validation).
+  - **Task 05 May 2026:** QA Profile Form practice on The Testing Academy app.
 
 ---
 

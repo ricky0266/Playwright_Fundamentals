@@ -50,6 +50,7 @@ interface TestData {
     error?: string;
     errorStack?: string;
     tags: string[];
+    consoleLogs?: string[];  // All stdout/stderr collected at test level
 }
 
 interface FileGroup {
@@ -81,6 +82,8 @@ class CustomTTAReporter implements Reporter {
     private testCounter: number = 0;
     private runningTests: Map<string, TestData> = new Map();
     private completedTestIds: Set<string> = new Set();
+    // Collects stdout/stderr per test via onStdOut/onStdErr hooks
+    private testLogsMap: Map<string, string[]> = new Map();
 
     onBegin(config: FullConfig, suite: Suite): void {
         const now = new Date();
@@ -151,6 +154,36 @@ class CustomTTAReporter implements Reporter {
         if (step.category === 'test.step') {
             console.log(`   ⏳ ${step.title}...`);
         }
+    }
+
+    /**
+     * Called by Playwright whenever a test worker writes to stdout.
+     * This is the correct, guaranteed way to capture console.log() from tests.
+     */
+    onStdOut(chunk: string | Buffer, test?: TestCase): void {
+        const text = typeof chunk === 'string' ? chunk : chunk.toString();
+        // DEBUG
+        fs.appendFileSync('tta-report/debug.log', `onStdOut called. Test: ${test?.id}, Text: ${text.trim()}\n`);
+
+        if (!test) return;
+        const lines = text.split('\n').filter(l => l.trim());
+        if (lines.length === 0) return;
+        const existing = this.testLogsMap.get(test.id) || [];
+        existing.push(...lines);
+        this.testLogsMap.set(test.id, existing);
+    }
+
+    /**
+     * Called by Playwright whenever a test worker writes to stderr.
+     */
+    onStdErr(chunk: string | Buffer, test?: TestCase): void {
+        if (!test) return;
+        const text = typeof chunk === 'string' ? chunk : chunk.toString();
+        const lines = text.split('\n').filter(l => l.trim()).map(l => `[stderr] ${l}`);
+        if (lines.length === 0) return;
+        const existing = this.testLogsMap.get(test.id) || [];
+        existing.push(...lines);
+        this.testLogsMap.set(test.id, existing);
     }
 
     onStepEnd(test: TestCase, _result: TestResult, step: TestStep): void {
@@ -322,6 +355,23 @@ class CustomTTAReporter implements Reporter {
 
         const tagMatches = test.title.match(/@\w+/g) || [];
 
+        // Use logs captured in real-time by onStdOut/onStdErr hooks (guaranteed to work
+        // regardless of Playwright's captureOutput config setting)
+        const allTestLogs: string[] = this.testLogsMap.get(test.id) || [];
+        // Fallback: also check result.stdout in case captureOutput:'always' is set
+        if (allTestLogs.length === 0) {
+            for (const chunk of (result.stdout || [])) {
+                const text = typeof chunk === 'string' ? chunk : Buffer.isBuffer(chunk) ? chunk.toString() : '';
+                allTestLogs.push(...text.split('\n').filter(l => l.trim()));
+            }
+            for (const chunk of (result.stderr || [])) {
+                const text = typeof chunk === 'string' ? chunk : Buffer.isBuffer(chunk) ? chunk.toString() : '';
+                allTestLogs.push(...text.split('\n').filter(l => l.trim()).map(l => `[stderr] ${l}`));
+            }
+        }
+        // Clean up map entry
+        this.testLogsMap.delete(test.id);
+
         const testData: TestData = {
             id: `test-${test.id}`,
             title: test.title,
@@ -339,6 +389,7 @@ class CustomTTAReporter implements Reporter {
             error: result.error?.message,
             errorStack: result.error?.stack,
             tags: tagMatches,
+            consoleLogs: allTestLogs,
         };
 
         this.testResults.push(testData);
@@ -890,6 +941,28 @@ class CustomTTAReporter implements Reporter {
 
     private generateTestDetailPanel(test: TestData): string {
         let html = '<div class="detail-panel">';
+
+        // ── TOP-LEVEL CONSOLE OUTPUT SECTION ────────────────────────────────
+        if (test.consoleLogs && test.consoleLogs.length > 0) {
+            html += `
+            <div class="detail-section console-section">
+                <div class="section-header" onclick="toggleSection(this)">
+                    <span class="section-arrow">▼</span> 📋 Console Output
+                    <span class="console-count-badge">${test.consoleLogs.length} line${test.consoleLogs.length !== 1 ? 's' : ''}</span>
+                </div>
+                <div class="section-content">
+                    <div class="test-console-content">`;
+            for (const log of test.consoleLogs) {
+                // Colour-code stderr lines differently
+                const isStderr = log.startsWith('[stderr]');
+                html += `<div class="console-line${isStderr ? ' console-stderr' : ''}">${this.escapeHtml(log)}</div>`;
+            }
+            html += `
+                    </div>
+                </div>
+            </div>`;
+        }
+        // ── END CONSOLE OUTPUT SECTION ──────────────────────────────────────
 
         if (test.error) {
             html += `
@@ -1648,6 +1721,43 @@ class CustomTTAReporter implements Reporter {
             border-bottom: 1px solid rgba(255,255,255,0.05);
         }
         .console-line:last-child { border-bottom: none; }
+
+        /* ── Test-level Console Output ─────────────────────────────────── */
+        .console-section .section-header {
+            background: #0f1e14;
+            color: #a7f3d0;
+            border-left: 4px solid #10b981;
+        }
+        .console-section .section-header:hover { background: #162b1e; }
+        .console-count-badge {
+            margin-left: auto;
+            background: rgba(167,243,208,0.15);
+            color: #6ee7b7;
+            border: 1px solid #065f46;
+            padding: 2px 10px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        .test-console-content {
+            background: #0d1117;
+            color: #a7f3d0;
+            padding: 16px;
+            border-radius: var(--radius-sm);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            line-height: 1.7;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .test-console-content .console-line {
+            padding: 3px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.04);
+        }
+        .test-console-content .console-stderr {
+            color: #fbbf24;
+        }
+        /* ── End Test-level Console Output ─────────────────────────────── */
 
         /* Screenshots */
         .step-screenshot { margin-bottom: 16px; }
