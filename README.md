@@ -1,6 +1,6 @@
 # 🎭 Playwright Fundamentals
 
-A comprehensive Playwright test automation learning project covering core concepts from basics to advanced topics including Allure reporting, session storage, web tables, and more.
+This repository contains Playwright test scripts and tutorials for learning Playwright automation from basics to advanced topics, including Allure reporting, session storage, web tables, and daily practice projects.
 
 > **Course Reference:** [The Testing Academy](https://thetestingacademy.com)  
 > **Author:** Pramod Dutta
